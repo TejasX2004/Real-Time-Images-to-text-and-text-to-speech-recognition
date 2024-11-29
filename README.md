@@ -15,7 +15,7 @@ This project implements a real-time text detection and recognition system that c
 - Python 3.x
 - `pyttsx3` for text-to-speech functionality
 - `opencv-python` for video capture and image processing
-- `torch` for CUDA support (if available)
+- `torch` for CUDA support
 - `nltk` for natural language processing
 - `craft-text-detector` for text region detection
 - `easyocr` for optical character recognition
