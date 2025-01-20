@@ -4,3 +4,4 @@ pyttsx3
 numpy
 opencv-python-headless
 Pillow
+nltk>=3.8.1
