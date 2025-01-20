@@ -1,0 +1,4 @@
+libespeak-dev
+python3-espeak
+portaudio19-dev
+python3-all-dev
