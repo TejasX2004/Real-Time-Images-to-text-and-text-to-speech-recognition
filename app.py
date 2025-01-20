@@ -12,9 +12,16 @@ def text_to_speech(text):
     """
     Converts text to speech using pyttsx3 (offline and faster).
     """
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
+    try:
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+    except Exception as e:
+        st.warning(f"Text-to-speech failed: {text}")
+        # Optionally store the text in a list to display
+        if 'tts_failed_texts' not in st.session_state:
+            st.session_state.tts_failed_texts = []
+        st.session_state.tts_failed_texts.append(text)
 
 
 # Text Recognition Function
