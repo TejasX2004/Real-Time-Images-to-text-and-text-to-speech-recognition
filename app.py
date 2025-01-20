@@ -8,7 +8,7 @@ import base64
 import os
 import nltk
 from nltk.tokenize import sent_tokenize
-import time
+import io
 
 # Download required NLTK data
 try:
@@ -16,11 +16,35 @@ try:
 except LookupError:
     nltk.download('punkt')
 
+def safe_image_open(upload):
+    """
+    Safely open and process uploaded images, including those from smartphones
+    """
+    try:
+        # Read the file into bytes
+        bytes_data = upload.getvalue()
+        
+        # Convert to PIL Image
+        image = Image.open(io.BytesIO(bytes_data))
+        
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+            
+        # Convert to numpy array
+        frame = np.array(image)
+        
+        return frame, None
+    except Exception as e:
+        return None, f"Error processing image: {str(e)}"
 
 def process_text(texts):
     """
     Process and normalize detected texts into proper sentences.
     """
+    if not texts:
+        return ""
+        
     # Combine all texts with spaces
     combined_text = ' '.join(texts)
 
@@ -33,18 +57,16 @@ def process_text(texts):
         sentences = sent_tokenize(normalized)
         processed_text = ' '.join(sentences)
     except:
-        # Fallback if sentence tokenization fails
         processed_text = normalized
 
     return processed_text
-
 
 def create_combined_audio(texts):
     """
     Creates a single audio file from multiple texts with pauses between sentences.
     """
     if not texts:
-        return None
+        return None, ""
 
     # Process and normalize the text
     processed_text = process_text(texts)
@@ -52,40 +74,36 @@ def create_combined_audio(texts):
     try:
         # Create audio file
         tts = gTTS(text=processed_text, lang='en')
-        tts.save('combined_audio.mp3')
-
-        with open('combined_audio.mp3', 'rb') as f:
-            audio_bytes = f.read()
-
-        os.remove('combined_audio.mp3')
-        return audio_bytes, processed_text
+        audio_bytes = io.BytesIO()
+        tts.write_to_fp(audio_bytes)
+        audio_bytes.seek(0)
+        return audio_bytes.read(), processed_text
     except Exception as e:
         st.error(f"Error creating audio: {str(e)}")
         return None, processed_text
-
 
 def recognize_text(frame, reader):
     """
     Detects and recognizes text in the given frame using EasyOCR.
     """
-    results = reader.readtext(frame)
-    detected_texts = []
-    for (bbox, text, prob) in results:
-        if prob > 0.5:  # Confidence threshold
-            detected_texts.append((bbox, text))
-    return detected_texts
-
+    try:
+        results = reader.readtext(frame)
+        detected_texts = []
+        for (bbox, text, prob) in results:
+            if prob > 0.5:  # Confidence threshold
+                detected_texts.append((bbox, text))
+        return detected_texts, None
+    except Exception as e:
+        return None, f"Error detecting text: {str(e)}"
 
 # Streamlit App
 st.title("Real-Time-Images-to-Text-Text-to-Speech")
 st.write("Upload an image or use your webcam to detect text and convert it to speech.")
 
-
 # Initialize OCR reader
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'])
-
 
 reader = load_ocr()
 
@@ -94,79 +112,98 @@ if 'detected_texts' not in st.session_state:
     st.session_state.detected_texts = []
 
 # Option for webcam or file upload
-source = st.radio("Select Input Source", ("Webcam", "Upload"))
+source = st.radio("Select Input Source", ("Upload", "Webcam"))
 
-if source == "Webcam":
+if source == "Upload":
+    uploaded_file = st.file_uploader("Upload an Image", type=["png", "jpg", "jpeg"])
+    
+    if uploaded_file is not None:
+        # Show loading spinner while processing
+        with st.spinner('Processing image...'):
+            # Safely open and process the image
+            frame, error = safe_image_open(uploaded_file)
+            
+            if error:
+                st.error(error)
+            elif frame is not None:
+                try:
+                    # Convert frame to grayscale for OCR
+                    frame_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+
+                    # Recognize text
+                    detected_texts, error = recognize_text(frame_gray, reader)
+                    
+                    if error:
+                        st.error(error)
+                    elif detected_texts:
+                        # Store unique texts
+                        current_texts = [text for _, text in detected_texts]
+                        st.session_state.detected_texts.extend(text for text in current_texts
+                                                           if text not in st.session_state.detected_texts)
+
+                        # Process detected text
+                        frame_with_boxes = frame.copy()
+                        for (bbox, text) in detected_texts:
+                            # Draw bounding box
+                            points = np.array(bbox).astype(np.int32)
+                            x_min, y_min = points.min(axis=0)
+                            x_max, y_max = points.max(axis=0)
+                            cv2.rectangle(frame_with_boxes, 
+                                        (int(x_min), int(y_min)), 
+                                        (int(x_max), int(y_max)), 
+                                        (0, 255, 0), 2)
+                            cv2.putText(frame_with_boxes, text, 
+                                      (int(x_min), int(y_min) - 10),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+                        # Display annotated image
+                        st.image(frame_with_boxes, caption="Detected Text with Annotations")
+                    else:
+                        st.warning("No text detected in the image.")
+                        st.image(frame, caption="Uploaded Image")
+                        
+                except Exception as e:
+                    st.error(f"Error processing image: {str(e)}")
+                    st.image(frame, caption="Uploaded Image (Error in Processing)")
+
+elif source == "Webcam":
     img_file_buffer = st.camera_input("Take a picture")
     if img_file_buffer is not None:
-        image = Image.open(img_file_buffer)
-        frame = np.array(image)
+        # Use the same safe image processing for webcam input
+        frame, error = safe_image_open(img_file_buffer)
+        
+        if error:
+            st.error(error)
+        elif frame is not None:
+            # Use the same processing logic as for uploaded images
+            frame_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+            detected_texts, error = recognize_text(frame_gray, reader)
+            
+            if error:
+                st.error(error)
+            elif detected_texts:
+                # Process and display results (same as upload section)
+                current_texts = [text for _, text in detected_texts]
+                st.session_state.detected_texts.extend(text for text in current_texts
+                                                   if text not in st.session_state.detected_texts)
 
-        # Convert frame to RGB if necessary
-        if len(frame.shape) == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        elif frame.shape[2] == 4:
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                frame_with_boxes = frame.copy()
+                for (bbox, text) in detected_texts:
+                    points = np.array(bbox).astype(np.int32)
+                    x_min, y_min = points.min(axis=0)
+                    x_max, y_max = points.max(axis=0)
+                    cv2.rectangle(frame_with_boxes, 
+                                (int(x_min), int(y_min)), 
+                                (int(x_max), int(y_max)), 
+                                (0, 255, 0), 2)
+                    cv2.putText(frame_with_boxes, text, 
+                              (int(x_min), int(y_min) - 10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
-        # Convert frame to grayscale for OCR
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # Recognize text
-        detected_texts = recognize_text(frame_gray, reader)
-
-        # Store unique texts
-        current_texts = [text for _, text in detected_texts]
-        st.session_state.detected_texts.extend(text for text in current_texts
-                                               if text not in st.session_state.detected_texts)
-
-        # Process detected text
-        for (bbox, text) in detected_texts:
-            # Draw bounding box
-            points = np.array(bbox).astype(np.int32)
-            x_min, y_min = points.min(axis=0)
-            x_max, y_max = points.max(axis=0)
-            cv2.rectangle(frame, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 2)
-            cv2.putText(frame, text, (int(x_min), int(y_min) - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-
-        # Display annotated image
-        st.image(frame, caption="Detected Text with Annotations", channels="BGR")
-
-elif source == "Upload":
-    uploaded_file = st.file_uploader("Upload an Image", type=["png", "jpg", "jpeg"])
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        frame = np.array(image)
-
-        # Convert frame to RGB if necessary
-        if len(frame.shape) == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        elif frame.shape[2] == 4:
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-
-        # Convert frame to grayscale for OCR
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # Recognize text
-        detected_texts = recognize_text(frame_gray, reader)
-
-        # Store unique texts
-        current_texts = [text for _, text in detected_texts]
-        st.session_state.detected_texts.extend(text for text in current_texts
-                                               if text not in st.session_state.detected_texts)
-
-        # Process detected text
-        for (bbox, text) in detected_texts:
-            # Draw bounding box
-            points = np.array(bbox).astype(np.int32)
-            x_min, y_min = points.min(axis=0)
-            x_max, y_max = points.max(axis=0)
-            cv2.rectangle(frame, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), 2)
-            cv2.putText(frame, text, (int(x_min), int(y_min) - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-
-        # Display annotated image
-        st.image(frame, caption="Detected Text with Annotations", channels="BGR")
+                st.image(frame_with_boxes, caption="Detected Text with Annotations")
+            else:
+                st.warning("No text detected in the image.")
+                st.image(frame, caption="Captured Image")
 
 # Display detected texts and create combined audio
 if st.session_state.detected_texts:
