@@ -218,7 +218,7 @@ if st.session_state.detected_texts:
             st.write("### Processed Text:")
             st.write(processed_text)
 
-            st.write("### Combined Audio:")
+            st.write("### Listen Audio:")
             # Create download button
             st.download_button(
                 label="Download Audio",
