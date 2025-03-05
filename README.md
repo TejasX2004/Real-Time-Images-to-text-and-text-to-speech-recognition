@@ -10,6 +10,10 @@ This project implements a real-time text detection and recognition system that c
 - **Optimized performance** by processing every Nth frame from the webcam feed.
 - **Text cleaning and summarization** using basic NLP techniques to remove stopwords and non-alphanumeric characters.
 
+## To access this app
+
+https://texttospeechv1.streamlit.app
+
 ## Requirements
 
 - Python 3.x
